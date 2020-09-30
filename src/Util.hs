@@ -4,6 +4,7 @@ import Control.Applicative
 import Control.Monad
 import Data.List (elemIndex)
 import Data.Maybe (fromMaybe)
+import Data.Bifunctor
   
 ----------------------------------------------------------------------
 --                              Result                              --
@@ -15,6 +16,11 @@ instance Functor (Result e) where
   fmap f (Success a)   = Success (f a)
   fmap f (Trace msg r) = Trace msg $ fmap f r
   fmap _ (Error msg)   = Error msg
+
+instance Bifunctor Result where
+  bimap _  fa (Success a)   = Success (fa a)
+  bimap fe fa (Trace msg r) = Trace msg $ bimap fe fa r
+  bimap fe _  (Error msg)   = Error (fe msg)
 
 instance Applicative (Result e) where
   pure x = Success x
@@ -69,6 +75,11 @@ successOrDefault :: Result e a -> a -> a
 successOrDefault (Success a) _ = a
 successOrDefault (Trace _ x) a = successOrDefault x a
 successOrDefault (Error _)   a = a
+
+toEither :: Result e a -> Either e a
+toEither (Success a) = Right a
+toEither (Trace _ a) = toEither a
+toEither (Error e)   = Left e
 
 ----------------------------------------------------------------------
 --                              Parser                              --

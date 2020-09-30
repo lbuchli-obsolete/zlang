@@ -3,4 +3,4 @@ module Main where
 import Lib
 
 main :: IO ()
-main = someFunc
+main = print $ parse ":: 'id' a:_ -> a = ads"

@@ -1,27 +1,34 @@
 {-# LANGUAGE LambdaCase #-}
 module Parser where
 
+import Data.Bifunctor
 import Control.Applicative
 import Util
 import AST
 
 type Error = String
 
+type ParseError = (Pos, Error)
+
+parse :: String -> Result ParseError File
+parse s = second (\(_, _, f) -> f) $ parseSrc file s
+  
 file :: Parser String Error File
-file = many declaration
+file = many declaration <* eof
 
 -- TODO support infix expressions
 declaration :: Parser String Error Decl
-declaration = (\s t e -> Decl s 0 t e) <$> decl_name <*> ptype <*> expr
+declaration = (\s t e -> Decl s 0 t e) <$> decl_name <*> ptype <*> (symbol "=" *> expr)
   where
-    decl_name = symbol "::" *> symbol "'" *> some (noneOf "()\\ \n\t") <* symbol "'"
+    decl_name = symbol "::" *> str "'" *> some (noneOf "()\\ \n\t'") <* symbol "'"
 
 ptype :: Parser String Error Type
-ptype = (\x xs -> mkApChain TFn (x:xs)) <$> typeNoFn <*> some (symbol "->" *> typeNoFn)
+ptype = (\x xs -> mkApChain TFn (x:xs)) <$> typeNoFn <*> many (symbol "->" *> typeNoFn)
 
 typeNoFn :: Parser String Error Type
-typeNoFn = TNamed <$> some (noneOf "()\\ \n\t:") <*> typeSimple
-       <|> TExpr <$> expr
+typeNoFn = TNamed <$> some (noneOf "()\\ \n\t:") <*> (str ":" *> typeSimple)
+       <|> TExpr <$> exprNAp
+       <|> TExpr <$> (symbol "(" *> expr <* symbol ")")
        <|> typeSimple
 
 -- Types that are not context dependent
@@ -40,13 +47,13 @@ expr = mkApChain mkExpr <$> some exprNAp
 exprNAp :: Parser String Error Expr
 exprNAp = symbol "(" *> expr <* symbol ")"
       <|> str "λ" *> lambda
-      <|> (\x -> Expr (EType x) TType) <$> typeSimple
-      <|> mk_builtin EI64 "I64" . read <$> some any_digit
-      <|> mk_builtin EF64 "F64" . read <$> float
       <|> mk_builtin EStr "String"     <$> string
       <|> mk_builtin EChar "Char"      <$> char
       <|> mk_builtin EByte "Byte"      <$> byte
       <|> mk_builtin EPtr "&"          <$> ptr
+      <|> mk_builtin EF64 "F64" . read <$> float
+      <|> mk_builtin EI64 "I64" . read <$> some any_digit
+      <|> (\x -> Expr (EType x) TType) <$> typeSimple
       <|> (\x -> Expr (EVar x) TAny)   <$> anySymbol
   where
     mk_builtin ef s x = Expr (ef x) (TExpr (Expr (EVar s) TType))
