@@ -1,4 +1,6 @@
+
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MonoLocalBinds #-}
 module Parser where
 
 import Data.Bifunctor
@@ -6,33 +8,31 @@ import Control.Applicative
 import Util
 import AST
 
-type Error = String
+type ZParser a = Parser String String a
 
-type ParseError = (Pos, Error)
-
-parse :: String -> Result ParseError File
-parse s = second (\(_, _, f) -> f) $ parseSrc file s
+parse :: String -> Result String File
+parse s = bimap show (\(_, _, f) -> f) $ parseSrc file s
   
-file :: Parser String Error File
+file :: ZParser File
 file = many declaration <* eof
 
 -- TODO support infix expressions
-declaration :: Parser String Error Decl
+declaration :: ZParser Decl
 declaration = (\s t e -> Decl s 0 t e) <$> decl_name <*> ptype <*> (symbol "=" *> expr)
   where
     decl_name = symbol "::" *> str "'" *> some (noneOf "()\\ \n\t'") <* symbol "'"
 
-ptype :: Parser String Error Type
+ptype :: ZParser Type
 ptype = (\x xs -> mkApChain TFn (x:xs)) <$> typeNoFn <*> many (symbol "->" *> typeNoFn)
 
-typeNoFn :: Parser String Error Type
+typeNoFn :: ZParser Type
 typeNoFn = TNamed <$> some (noneOf "()\\ \n\t:") <*> (str ":" *> typeSimple)
        <|> TExpr <$> exprNAp
        <|> TExpr <$> (symbol "(" *> expr <* symbol ")")
        <|> typeSimple
 
 -- Types that are not context dependent
-typeSimple :: Parser String Error Type
+typeSimple :: ZParser Type
 typeSimple = TType <$ symbol "*"
          <|> TAny <$ symbol "_"
          <|> TExpr . (\x -> Expr (EVar x) TType) <$> any_builtin
@@ -40,11 +40,11 @@ typeSimple = TType <$ symbol "*"
   where
     any_builtin = foldl (\a b -> a <|> symbol b) (Parser (\_ -> parseError "Not a builtin type")) builtinTypes
   
-expr :: Parser String Error Expr
+expr :: ZParser Expr
 expr = mkApChain mkExpr <$> some exprNAp
   where mkExpr a b = Expr (EAp a b) (TFn (_type a) (_type b))
 
-exprNAp :: Parser String Error Expr
+exprNAp :: ZParser Expr
 exprNAp = symbol "(" *> expr <* symbol ")"
       <|> str "λ" *> lambda
       <|> mk_builtin EStr "String"     <$> string
@@ -64,37 +64,37 @@ exprNAp = symbol "(" *> expr <* symbol ")"
     byte   = str "0x" *> ((\a b -> a*16 + b) <$> anyHex <*> anyHex)
     ptr    = foldl (\a b -> a*16 + b) 0 <$> (str "&" *> some anyHex)
 
-lambda :: Parser String Error Expr
+lambda :: ZParser Expr
 lambda = mkLambda <$> some (noneOf "()\\ \n\t.") <* str "." <*> lambda
      <|> exprNAp
   where mkLambda s e = Expr (ELambda s e) (TFn TAny (_type e))
   
-str :: String -> Parser String Error String
+str :: String -> ZParser String
 str s = Parser $ \i -> if take len i == s then
                          Success (drop len i, posOffsetOf s, s)
                        else
                          parseError ("Input does not match '" ++ s ++ "'")
   where len = length s
 
-symbol :: String -> Parser String Error String
+symbol :: String -> ZParser String
 symbol s = str s <* many ws
 
-noneOf :: [Char] -> Parser String Error Char
+noneOf :: [Char] -> ZParser Char
 noneOf vs = Parser $ \case
   []     -> parseError "Empty input"
   (x:_) | elem x vs -> parseError $ "Should not match '" ++ [x] ++ "'"
   (x:xs) -> Success (xs, posOffsetOf [x], x)
 
-anyOf :: [Char] -> Parser String Error Char
+anyOf :: [Char] -> ZParser Char
 anyOf vs = Parser $ \case
   []     -> parseError "Empty input"
   (x:xs) | elem x vs -> Success (xs, posOffsetOf [x], x)
   (_:_)              -> parseError $ "Input does not match any of '" ++ vs ++ "'"
 
-anySymbol :: Parser String Error String
+anySymbol :: ZParser String
 anySymbol = some (noneOf "()\\ \n\t") <* optional ws
 
-anyHex :: (Integral a, Read a) => Parser String Error a
+anyHex :: (Integral a, Read a) => ZParser a
 anyHex = read . pure <$> anyOf "0123456789"
      <|> 10 <$ anyOf "aA"
      <|> 11 <$ anyOf "bB"
@@ -103,10 +103,10 @@ anyHex = read . pure <$> anyOf "0123456789"
      <|> 14 <$ anyOf "eE"
      <|> 15 <$ anyOf "fF"
   
-ws :: Parser String Error String
+ws :: ZParser String
 ws = str "\n" <|> str "\t" <|> str " "
 
-eof :: Parser String Error ()
+eof :: ZParser ()
 eof = Parser $ \i -> if null i then
                        Success ("", Pos 0 0, ())
                      else

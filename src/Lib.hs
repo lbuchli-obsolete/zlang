@@ -1,13 +1,19 @@
 module Lib (
-  File, Symbol, Decl, Type, Expr, Eval,
-  parse
+  File, Symbol, Decl, Type, Expr, Eval
 ) where
 
+import Util
 import AST
 import Parser
-import Util
-import Data.Bifunctor
-import Control.Applicative
+import Compiler
+import Minimizer
+import Prefixer
+import TypeChecker
+  
 
-parse :: String -> Either String Decl
-parse s = bimap snd (\(_, _, f) -> f) $ toEither $ parseSrc declaration s
+build :: String -> Result String Asm
+build s = parse s
+      >>= Success . prefix
+      >>= check
+      >>= Success . minimize
+      >>= Success . compile
