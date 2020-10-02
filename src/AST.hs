@@ -15,7 +15,7 @@ data Decl = Decl {
   _name :: Symbol,
   _pos :: Int,
   _dtype :: Type,
-  _body :: Expr
+  _body :: Eval
 } deriving Show -- TODO own show instance
 
 data Type = TFn Type Type

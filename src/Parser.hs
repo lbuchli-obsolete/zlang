@@ -18,7 +18,7 @@ file = many declaration <* eof
 
 -- TODO support infix expressions
 declaration :: ZParser Decl
-declaration = (\s t e -> Decl s 0 t e) <$> decl_name <*> ptype <*> (symbol "=" *> expr)
+declaration = (\s t e -> Decl s 0 t (_eval e)) <$> decl_name <*> ptype <*> (symbol "=" *> expr)
   where
     decl_name = symbol "::" *> str "'" *> some (noneOf "()\\ \n\t'") <* symbol "'"
 

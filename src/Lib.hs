@@ -1,15 +1,20 @@
 module Lib (
-  File, Symbol, Decl, Type, Expr, Eval
+  Asm, build, typeCheck
 ) where
 
-import Util
 import AST
+import Util
 import Parser
 import Compiler
 import Minimizer
 import Prefixer
 import TypeChecker
   
+
+typeCheck :: String -> Result String File
+typeCheck s = parse s
+          >>= Success . prefix
+          >>= check
 
 build :: String -> Result String Asm
 build s = parse s

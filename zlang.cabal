@@ -26,8 +26,13 @@ source-repository head
 library
   exposed-modules:
       AST
+      Compiler
+      Interpreter
       Lib
+      Minimizer
       Parser
+      Prefixer
+      TypeChecker
       Util
   other-modules:
       Paths_zlang
