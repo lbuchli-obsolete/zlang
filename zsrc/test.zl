@@ -1,1 +1,4 @@
-:: 'id' a:_ -> a = λx.x
+das isch en kommentar
+
+
+:: 'test' -> F64 -> I64 = λx.(3)

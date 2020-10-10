@@ -13,7 +13,7 @@ parse :: String -> Result String File
 parse s = bimap show (\(_, _, f) -> f) $ parseSrc file s
   
 file :: ZParser File
-file = many declaration <* eof -- TODO comment lines
+file = many (many commentLine *> declaration <* many commentLine) <* eof
 
 declaration :: ZParser Decl
 declaration = (,) <$> many tag <*> expr
@@ -38,8 +38,13 @@ typeSimple :: ZParser Type
 typeSimple = TType <$ symbol "*"
          <|> TAny <$ symbol "_"
          <|> TToken <$> (str "'" *> some (noneOf "()\\ \n\t'") <* symbol "'")
-         <|> (\s -> TExpr (EVar s, TAny)) <$> anySymbol 
-         <|> TExpr <$> (str "$" *> exprNAp)
+         <|> TList <$> (symbol "[" *> ptype <* symbol "]")
+         <|> TI64 <$ symbol "I64"
+         <|> TF64 <$ symbol "F64"
+         <|> TChar <$ symbol "Char"
+         <|> TByte <$ symbol "Byte"
+         <|> (\s -> TExpr (EVar s, TAny)) <$> anySymbol
+         <|> TExpr <$> (str "$" *> exprNAp) -- TODO find a better solution than prefix
          <|> symbol "(" *> ptype <* symbol ")"
   
 expr :: ZParser Expr
@@ -51,16 +56,16 @@ expr = (\t e -> (fst e, t)) <$> (symbol "::" *> ptype <* symbol "=") <*> chain
 exprNAp :: ZParser Expr
 exprNAp = symbol "(" *> expr <* symbol ")"
       <|> str "λ" *> lambda
-      <|> mk_builtin EStr "String"     <$> string
-      <|> mk_builtin EChar "Char"      <$> char
-      <|> mk_builtin EByte "Byte"      <$> byte
-      <|> mk_builtin EPtr "&"          <$> ptr
-      <|> mk_builtin EF64 "F64" . read <$> float
-      <|> mk_builtin EI64 "I64" . read <$> some any_digit
-      <|> (\x -> (EType x, TType))     <$> typeSimple
-      <|> (\x -> (EVar x, TAny))       <$> anySymbol
+      <|> mk_builtin (EList . map (mk_builtin EChar TChar)) (TList TChar) <$> string
+      <|> mk_builtin EChar TChar      <$> char
+      <|> mk_builtin EByte TByte      <$> byte
+      <|> mk_builtin EF64 TF64 . read <$> float
+      <|> mk_builtin EI64 TI64 . read <$> some any_digit
+      <|> mk_builtin EI64 TI64        <$> ptr
+      <|> (\x -> (EType x, TType))    <$> typeSimple
+      <|> (\x -> (EVar x, TAny))      <$> anySymbol
   where
-    mk_builtin ef s x = (ef x, (TExpr (EVar s, TType)))
+    mk_builtin ef t x = (ef x, t)
     any_digit = anyOf "0123456789"
     float  = (\a b c -> a ++ b ++ c) <$> many any_digit <*> str "." <*> some any_digit
     string = str "\"" *> many (noneOf "\"" <|> ('"' <$ str "\\\"")) <* str "\""
@@ -72,7 +77,10 @@ lambda :: ZParser Expr
 lambda = mkLambda <$> some (noneOf "()\\ \n\t'.") <* str "." <*> lambda
      <|> exprNAp
   where mkLambda s e = (ELambda s e, (TFn [TAny, (snd e)]))
-  
+
+commentLine :: ZParser String
+commentLine = (noneOf ":\n" *> many (noneOf "\n") <* str "\n") <|> str "\n"
+
 str :: String -> ZParser String
 str s = Parser $ \i -> if take len i == s then
                          Success (drop len i, posOffsetOf s, s)

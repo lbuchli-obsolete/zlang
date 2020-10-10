@@ -1,18 +1,18 @@
 module Main where
 
-import Lib
-import System.IO
+import           Lib
+import           System.IO
 
 file :: String
 file = "/home/lukas/workspace/haskell/zlang/zsrc/test.zl"
 
--- main :: IO ()
--- main = do
---   handle <- openFile file ReadMode
---   contents <- hGetContents handle
---   print $ typeCheck contents
-
 main :: IO ()
 main = do
-  print $ typeCheck ":: 'add' I64 | F64 -> I64 = 35"
+  contents <- readUTF8File file
+  print $ typeCheck contents
 
+readUTF8File :: String -> IO String
+readUTF8File path = do
+  inputHandle <- openFile path ReadMode
+  hSetEncoding inputHandle utf8
+  hGetContents inputHandle

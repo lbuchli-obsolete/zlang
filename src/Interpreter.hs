@@ -11,25 +11,23 @@ import           IR
 type Env = [Eval]
 
 interpret :: File -> Expr -> Result String Expr
-interpret = undefined
-{-
-interpret file expr = reduce initial_env (_eval expr) >>= \eval ->
-                      guessType eval >>= \etype ->
-                      Success (Expr eval etype)
-  where
-    initial_env = map (\d -> (_name d, _body d)) file
+interpret file expr = reduce file [] (fst expr)
+  >>= \eval -> Success (guessType eval) >>= \etype -> Success (eval, etype)
 
-reduce :: Env -> Eval -> Result String Eval
-reduce e (EAp (Expr (ELambda s (Expr a _)) _) (Expr b _))      = reduce ((s, b):e) a
-reduce e (EAp (Expr a ta) (Expr b tb))                         = (\a' -> EAp (Expr a' ta) (Expr b tb)) <$> reduce e a
-reduce e (ELambda s (Expr x tx))                               = (\x' -> ELambda s (Expr x' tx)) <$> reduce e x
-reduce e (EType t)                                             = EType <$> reduceType e t
-reduce _ other                                                 = Success other
+reduce :: File -> Env -> Eval -> Result String Eval
+reduce f e (EAp (ELambda _ (a, _), _) (b, _)) = reduce f (b : e) a
+reduce f e (EAp (a, ta) (b, tb)) =
+  (\a' -> EAp (a', ta) (b, tb)) <$> reduce f e a
+reduce f e (ELambda s (x, tx)) = (\x' -> ELambda s (x', tx)) <$> reduce f e x
+reduce f e (EType     t      ) = EType <$> reduceType f e t
+reduce _ e (ELocalRef i      ) = Success (e !! i)
+reduce f e (ECall i n        ) = undefined
+reduce _ _ other               = Success other
 
-reduceType :: Env -> Type -> Result String Type
-reduceType e (TFn a b)           = TFn <$> reduceType e a <*> reduceType e b
-reduceType e (TEither a b)       = TEither <$> reduceType e a <*> reduceType e b
-reduceType e (TNamed s t)        = TNamed s <$> reduceType e t
-reduceType e (TExpr (Expr x tx)) = (\x' -> TExpr (Expr x' tx)) <$> reduce e x
-reduceType _ other               = Success other
--}
+reduceType :: File -> Env -> Type -> Result String Type
+reduceType f e (TFn a b) = TFn <$> reduceType f e a <*> reduceType f e b
+reduceType f e (TEither a b) =
+  TEither <$> reduceType f e a <*> reduceType f e b
+reduceType f e (TNamed s t   ) = TNamed s <$> reduceType f e t
+reduceType f e (TExpr (x, tx)) = (\x' -> TExpr (x', tx)) <$> reduce f e x
+reduceType _ _ other           = Success other

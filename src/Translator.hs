@@ -1,5 +1,6 @@
 module Translator where
 
+import           Data.Bifunctor                 ( first )
 import           Data.Foldable
 import           Data.Maybe
 import           Data.List
@@ -14,19 +15,18 @@ translate f = mapM (translateExpr f [] . snd) f
 
 translateExpr :: AST.File -> LocalEnv -> AST.Expr -> Result String IR.Expr
 translateExpr f env (e, t) = translateType f env t >>= \(t', env') ->
-  translateEval f env' e >>= \(e', t'') ->
-    IR.combineNoExpr t' t'' >>= \(_, t''') -> Success (e', t''')
+  translateEval f env' e
+    >>= \(e', t'') -> combine t' t'' >>= \(_, t''') -> Success (e', t''')
 
 translateEval :: AST.File -> LocalEnv -> AST.Eval -> Result String IR.Expr
 translateEval f env (AST.EAp exprs     ) = translateAp f env exprs
 translateEval f env (AST.ELambda s expr) = translateLambda f env s expr
 translateEval f env (AST.EType etype   ) = translateEType f env etype
-translateEval _ _   (AST.EI64  _       ) = undefined -- TODO howto builtin types?
-translateEval _ _   (AST.EF64  _       ) = undefined
-translateEval _ _   (AST.EStr  _       ) = undefined
-translateEval _ _   (AST.EChar _       ) = undefined
-translateEval _ _   (AST.EByte _       ) = undefined
-translateEval _ _   (AST.EPtr  _       ) = undefined
+translateEval _ _   (AST.EI64  x       ) = Success (IR.EI64 x, IR.TI64)
+translateEval _ _   (AST.EF64  x       ) = Success (IR.EF64 x, IR.TF64)
+translateEval f env (AST.EList list    ) = translateList f env list
+translateEval _ _   (AST.EChar x       ) = Success (IR.EChar x, IR.TChar)
+translateEval _ _   (AST.EByte x       ) = Success (IR.EByte x, IR.TByte)
 translateEval f env (AST.EVar  v       ) = translateVar f env v
 
 translateAp :: AST.File -> LocalEnv -> [AST.Expr] -> Result String IR.Expr
@@ -58,8 +58,10 @@ translateEType f env t =
 translateType
   :: AST.File -> LocalEnv -> AST.Type -> Result String (IR.Type, LocalEnv)
 translateType _ _ (AST.TFn []) = Error "Empty application"
-translateType f env (AST.TFn (x : xs)) =
-  translateType f env x >>= \x' -> foldrM (foldTypeFn f) x' xs
+translateType f env (AST.TFn args) =
+  let args' = filter (not . isToken) args
+  in  translateType f env (head args')
+        >>= \x' -> foldrM (foldTypeFn f) x' (tail args')
 translateType f env (AST.TEither a b) = -- TODO propagate env?
   (\(a', _) (b', _) -> (IR.TEither a' b', env))
     <$> translateType f env a
@@ -70,7 +72,12 @@ translateType _ env AST.TType = Success (IR.TType, env)
 translateType _ env AST.TAny  = Success (IR.TAny, env)
 translateType f env (AST.TExpr e) =
   (\e' -> (e', env)) . IR.TExpr <$> translateExpr f env e
-translateType _ env (AST.TToken s) = Success (IR.TToken s, env)
+translateType _ env AST.TI64       = Success (IR.TI64, env)
+translateType _ env AST.TF64       = Success (IR.TF64, env)
+translateType f env (AST.TList t)  = first IR.TList <$> translateType f env t
+translateType _ env AST.TChar      = Success (IR.TChar, env)
+translateType _ env AST.TByte      = Success (IR.TByte, env)
+translateType _ _   (AST.TToken _) = Error "Tokens are not allowed in IR"
 
 foldTypeFn
   :: AST.File
@@ -79,6 +86,9 @@ foldTypeFn
   -> Result String (IR.Type, LocalEnv)
 foldTypeFn f at (t, env) =
   (\(t', env') -> (IR.TFn t' t, env')) <$> translateType f env at
+
+translateList :: AST.File -> LocalEnv -> [AST.Expr] -> Result String IR.Expr
+translateList = undefined
 
 translateVar :: AST.File -> LocalEnv -> Symbol -> Result String IR.Expr
 translateVar f env s = case lookup s env of
@@ -94,12 +104,14 @@ constructCall f env i len =
  where
   t        = AST.TFn (take len stripped ++ [AST.TFn (drop len stripped)])
   stripped = strip_tokens (snd . snd $ f !! i)
-  strip_tokens (AST.TFn ts)   = filter (not . is_token) ts
-  strip_tokens x | is_token x = []
-  strip_tokens x              = [x]
-  is_token (AST.TToken _   ) = True
-  is_token (AST.TNamed _ t') = is_token t'
-  is_token _                 = False
+  strip_tokens (AST.TFn ts)  = filter (not . isToken) ts
+  strip_tokens x | isToken x = []
+  strip_tokens x             = [x]
+
+isToken :: AST.Type -> Bool
+isToken (AST.TToken _   ) = True
+isToken (AST.TNamed _ t') = isToken t'
+isToken _                 = False
 
 bestAp :: AST.File -> LocalEnv -> [AST.Expr] -> Maybe (Int, [[AST.Expr]])
 bestAp f env exprs = highestPriority f candidates
@@ -141,3 +153,22 @@ mkApChain :: (a -> a -> a) -> [a] -> a
 mkApChain _ []  = error "Empty expression"
 mkApChain _ [x] = x
 mkApChain f xs  = f (mkApChain f $ init xs) (last xs)
+
+combine :: IR.Type -> IR.Type -> Result String (Bool, IR.Type)
+combine (IR.TNamed _ a) b               = combine a b
+combine a               (IR.TNamed _ b) = combine a b
+combine IR.TAny         b               = Success (True, b)
+combine a               IR.TAny         = Success (True, a)
+combine (IR.TFn a b)    (IR.TFn a' b')  = combine a a' >>= \(ca, a'') ->
+  combine b b' >>= \(cb, b'') -> Success (ca || cb, IR.TFn a'' b'')
+combine IR.TType     IR.TType     = Success (False, IR.TType)
+combine (IR.TExpr e) _            = Success (False, IR.TExpr e)
+combine _            (IR.TExpr e) = Success (False, IR.TExpr e)
+combine a b | a == b              = Success (False, a)
+combine a b =
+  Error
+    $  "Cannot combine type "
+    ++ show a
+    ++ " with type "
+    ++ show b
+    ++ " (translation phase)"
