@@ -26,12 +26,11 @@ source-repository head
 library
   exposed-modules:
       AST
-      Compiler
       Interpreter
+      IR
       Lib
-      Minimizer
       Parser
-      Prefixer
+      Translator
       TypeChecker
       Util
   other-modules:

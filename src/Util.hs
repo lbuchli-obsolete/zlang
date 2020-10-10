@@ -2,12 +2,12 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Util where
 
-import Control.Applicative
-import Control.Monad
-import Data.List (elemIndex)
-import Data.Maybe (fromMaybe)
-import Data.Bifunctor
-  
+import           Control.Applicative
+import           Control.Monad
+import           Data.List                      ( elemIndex )
+import           Data.Maybe                     ( fromMaybe )
+import           Data.Bifunctor
+
 ----------------------------------------------------------------------
 --                              Result                              --
 ----------------------------------------------------------------------
@@ -15,53 +15,53 @@ import Data.Bifunctor
 data Result e a = Success a | Trace String (Result e a) | Error e
 
 instance Functor (Result e) where
-  fmap f (Success a)   = Success (f a)
+  fmap f (Success a  ) = Success (f a)
   fmap f (Trace msg r) = Trace msg $ fmap f r
-  fmap _ (Error msg)   = Error msg
+  fmap _ (Error msg  ) = Error msg
 
 instance Bifunctor Result where
-  bimap _  fa (Success a)   = Success (fa a)
+  bimap _  fa (Success a  ) = Success (fa a)
   bimap fe fa (Trace msg r) = Trace msg $ bimap fe fa r
-  bimap fe _  (Error msg)   = Error (fe msg)
+  bimap fe _  (Error msg  ) = Error (fe msg)
 
 instance Applicative (Result e) where
   pure x = Success x
-  (<*>) (Success f) (Success a)  = Success (f a)
-  (<*>) (Trace _ rf) ra          = rf <*> ra
-  (<*>) (Error msg) _            = Error msg
-  (<*>) rf          (Trace _ ra) = rf <*> ra
-  (<*>) _           (Error msg)  = Error msg
+  (<*>) (Success f ) (Success a)  = Success (f a)
+  (<*>) (Trace _ rf) ra           = rf <*> ra
+  (<*>) (Error msg ) _            = Error msg
+  (<*>) rf           (Trace _ ra) = rf <*> ra
+  (<*>) _            (Error msg ) = Error msg
 
 instance Monad (Result e) where
-  (>>=) (Success a) f   = f a
+  (>>=) (Success a  ) f = f a
   (>>=) (Trace msg a) f = Trace msg (a >>= f)
-  (>>=) (Error msg) _   = Error msg
+  (>>=) (Error msg  ) _ = Error msg
 
 instance Alternative (Result e) where
   empty = Error (error "Error")
-  (<|>) (Trace _ a) b         = a <|> b
-  (<|>) (Success a) _         = Success a
-  (<|>) (Error a) (Trace _ b) = Error a <|> b
-  (<|>) (Error _) (Success b) = Success b
-  (<|>) (Error a) (Error _)   = Error a
+  (<|>) (Trace _ a) b           = a <|> b
+  (<|>) (Success a) _           = Success a
+  (<|>) (Error   a) (Trace _ b) = Error a <|> b
+  (<|>) (Error   _) (Success b) = Success b
+  (<|>) (Error   a) (Error   _) = Error a
 
 instance Eq a => Eq (Result e a) where
-  (==) (Success a)     (Success b)     = a == b
-  (==) (Success _)     _               = False
+  (==) (Success a    ) (Success b)     = a == b
+  (==) (Success _    ) _               = False
   (==) (Trace msg_a a) (Trace msg_b b) = msg_a == msg_b && a == b
-  (==) (Trace _ _)     _               = False
-  (==) (Error _)       (Error _)       = True
-  (==) (Error _)       _               = False
+  (==) (Trace _     _) _               = False
+  (==) (Error _      ) (Error _)       = True
+  (==) (Error _      ) _               = False
 
 instance (Show e, Show a) => Show (Result e a) where
-  show (Success a)   = "Success " ++ show a
+  show (Success a  ) = "Success " ++ show a
   show (Trace msg a) = "Trace '" ++ msg ++ "' $ " ++ show a
-  show (Error e)     = "Error: " ++ show e
+  show (Error e    ) = "Error: " ++ show e
 
 type ShowTrace = Bool
 printResult :: (Show e, Show a) => ShowTrace -> Result e a -> IO ()
-printResult _ (Error e) = print e
-printResult _ (Success s) = print s
+printResult _    (Error   e  ) = print e
+printResult _    (Success s  ) = print s
 printResult True (Trace msg r) = do
   putStr "TRACE: "
   putStrLn msg
@@ -71,17 +71,21 @@ printResult False (Trace _ r) = printResult False r
 noTrace :: Result e a -> Result e a
 noTrace (Success a) = Success a
 noTrace (Trace _ a) = noTrace a
-noTrace (Error e)   = Error e
+noTrace (Error e  ) = Error e
 
 successOrDefault :: Result e a -> a -> a
 successOrDefault (Success a) _ = a
 successOrDefault (Trace _ x) a = successOrDefault x a
-successOrDefault (Error _)   a = a
+successOrDefault (Error _  ) a = a
 
 toEither :: Result e a -> Either e a
 toEither (Success a) = Right a
 toEither (Trace _ a) = toEither a
-toEither (Error e)   = Left e
+toEither (Error e  ) = Left e
+
+fromMaybe :: Maybe a -> Result String a
+fromMaybe (Just a) = Success a
+fromMaybe Nothing  = Error "No value"
 
 ----------------------------------------------------------------------
 --                              Parser                              --
@@ -99,10 +103,9 @@ addPos :: Pos -> Pos -> Pos
 addPos (Pos x y) (Pos x' y') = Pos (x + x') (y + y')
 
 posOffsetOf :: String -> Pos
-posOffsetOf s = Pos
-  (length s - fromMaybe 0 (elemIndex '\n' s))
-  (length $ filter (== '\n') s)
-   
+posOffsetOf s = Pos (length s - Data.Maybe.fromMaybe 0 (elemIndex '\n' s))
+                    (length $ filter (== '\n') s)
+
 type State i e a = Result (Pos, e) (i, Pos, a)
 
 {-|
@@ -117,21 +120,25 @@ instance Functor (Parser i e) where
   fmap f b = Parser $ \i -> fmap (\(i', p, a) -> (i', p, f a)) (parseSrc b i)
 
 instance Applicative (Parser i e) where
-  pure x    = Parser $ \i -> pure (i, Pos 0 0, x)
-  (<*>) f a = Parser $ \i -> applyParser f a i
-
--- TODO calculate error position
-applyParser :: Parser i e (a -> b) -> Parser i e a -> i -> State i e b
-applyParser f a i = res_f >>= \(i', p', f') -> fmap (\(i'', p'', a') -> (i'', addPos p' p'', f' a')) (parseSrc a i')
-  where
-    res_f = parseSrc f i
+  pure x = Parser $ \i -> pure (i, Pos 0 0, x)
+  (<*>) f g = Parser $ (>>= parse_g) . parseSrc f
+   where
+    parse_g (i', pf, func) = bimap
+      (\(pg, msg) -> (addPos pf pg, msg))
+      (\(i'', pg, a) -> (i'', addPos pf pg, func a))
+      (parseSrc g i')
 
 instance Alternative (Parser i e) where
-  empty     = Parser $ const empty
+  empty = Parser $ const empty
   (<|>) a b = Parser $ \i -> parseSrc a i <|> parseSrc b i
 
 instance Monad (Parser i e) where
-  (>>=) pa pb = Parser $ parseSrc pa >=>
-    \(i', p, a) -> fmap
-      (\(i'', p', b) -> (i'', addPos p p', b))
-      (parseSrc (pb a) i')
+  (>>=) pa pb = Parser $ parseSrc pa >=> \(i', p, a) ->
+    fmap (\(i'', p', b) -> (i'', addPos p p', b)) (parseSrc (pb a) i')
+
+-------------------------------------------------------------------------
+--                                Other                                --
+-------------------------------------------------------------------------
+
+-- A string with no whitespace
+type Symbol = String

@@ -14,5 +14,5 @@ file = "/home/lukas/workspace/haskell/zlang/zsrc/test.zl"
 
 main :: IO ()
 main = do
-  print $ typeCheck ":: 'id' a:_ -> a = λx.x"
+  print $ typeCheck ":: 'add' I64 | F64 -> I64 = 35"
 

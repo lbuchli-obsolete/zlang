@@ -1,4 +1,3 @@
-
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MonoLocalBinds #-}
 module Parser where
@@ -14,35 +13,40 @@ parse :: String -> Result String File
 parse s = bimap show (\(_, _, f) -> f) $ parseSrc file s
   
 file :: ZParser File
-file = many declaration <* eof
+file = many declaration <* eof -- TODO comment lines
 
--- TODO support infix expressions
 declaration :: ZParser Decl
-declaration = (\s t e -> Decl s 0 t (_eval e)) <$> decl_name <*> ptype <*> (symbol "=" *> expr)
+declaration = (,) <$> many tag <*> expr
+
+tag :: ZParser Tag
+tag = symbol ":#" *> (priority <|> (Assoc <$> associativity))
   where
-    decl_name = symbol "::" *> str "'" *> some (noneOf "()\\ \n\t'") <* symbol "'"
+    priority = Priority . read <$> (symbol "priority" *> some (anyOf "0123456789"))
+    associativity = AssocLeft <$ (symbol "assoc" *> symbol "left")
+                <|> AssocRight <$ (symbol "assoc" *> symbol "right")
 
 ptype :: ZParser Type
-ptype = (\x xs -> mkApChain TFn (x:xs)) <$> typeNoFn <*> many (symbol "->" *> typeNoFn)
+ptype = (\x xs -> TFn (x:xs)) <$> typeNoFn <*> many (symbol "->" *> typeNoFn)
 
 typeNoFn :: ZParser Type
-typeNoFn = TNamed <$> some (noneOf "()\\ \n\t:") <*> (str ":" *> typeSimple)
-       <|> TExpr <$> exprNAp
-       <|> TExpr <$> (symbol "(" *> expr <* symbol ")")
+typeNoFn = TNamed <$> some (noneOf "()\\ \n\t':") <*> (str ":" *> typeSimple)
+       <|> TEither <$> typeSimple <*> (symbol "|" *> typeSimple)
        <|> typeSimple
 
 -- Types that are not context dependent
 typeSimple :: ZParser Type
 typeSimple = TType <$ symbol "*"
          <|> TAny <$ symbol "_"
-         <|> TExpr . (\x -> Expr (EVar x) TType) <$> any_builtin
+         <|> TToken <$> (str "'" *> some (noneOf "()\\ \n\t'") <* symbol "'")
+         <|> (\s -> TExpr (EVar s, TAny)) <$> anySymbol 
+         <|> TExpr <$> (str "$" *> exprNAp)
          <|> symbol "(" *> ptype <* symbol ")"
-  where
-    any_builtin = foldl (\a b -> a <|> symbol b) (Parser (\_ -> parseError "Not a builtin type")) builtinTypes
   
 expr :: ZParser Expr
-expr = mkApChain mkExpr <$> some exprNAp
-  where mkExpr a b = Expr (EAp a b) (TFn (_type a) (_type b))
+expr = (\t e -> (fst e, t)) <$> (symbol "::" *> ptype <* symbol "=") <*> chain
+   <|> chain
+  where
+    chain = (\exprs -> (EAp exprs, TAny)) <$> some exprNAp 
 
 exprNAp :: ZParser Expr
 exprNAp = symbol "(" *> expr <* symbol ")"
@@ -53,10 +57,10 @@ exprNAp = symbol "(" *> expr <* symbol ")"
       <|> mk_builtin EPtr "&"          <$> ptr
       <|> mk_builtin EF64 "F64" . read <$> float
       <|> mk_builtin EI64 "I64" . read <$> some any_digit
-      <|> (\x -> Expr (EType x) TType) <$> typeSimple
-      <|> (\x -> Expr (EVar x) TAny)   <$> anySymbol
+      <|> (\x -> (EType x, TType))     <$> typeSimple
+      <|> (\x -> (EVar x, TAny))       <$> anySymbol
   where
-    mk_builtin ef s x = Expr (ef x) (TExpr (Expr (EVar s) TType))
+    mk_builtin ef s x = (ef x, (TExpr (EVar s, TType)))
     any_digit = anyOf "0123456789"
     float  = (\a b c -> a ++ b ++ c) <$> many any_digit <*> str "." <*> some any_digit
     string = str "\"" *> many (noneOf "\"" <|> ('"' <$ str "\\\"")) <* str "\""
@@ -65,9 +69,9 @@ exprNAp = symbol "(" *> expr <* symbol ")"
     ptr    = foldl (\a b -> a*16 + b) 0 <$> (str "&" *> some anyHex)
 
 lambda :: ZParser Expr
-lambda = mkLambda <$> some (noneOf "()\\ \n\t.") <* str "." <*> lambda
+lambda = mkLambda <$> some (noneOf "()\\ \n\t'.") <* str "." <*> lambda
      <|> exprNAp
-  where mkLambda s e = Expr (ELambda s e) (TFn TAny (_type e))
+  where mkLambda s e = (ELambda s e, (TFn [TAny, (snd e)]))
   
 str :: String -> ZParser String
 str s = Parser $ \i -> if take len i == s then
@@ -92,7 +96,7 @@ anyOf vs = Parser $ \case
   (_:_)              -> parseError $ "Input does not match any of '" ++ vs ++ "'"
 
 anySymbol :: ZParser String
-anySymbol = some (noneOf "()\\ \n\t") <* optional ws
+anySymbol = some (noneOf "()\\ \n\t'") <* optional ws
 
 anyHex :: (Integral a, Read a) => ZParser a
 anyHex = read . pure <$> anyOf "0123456789"
@@ -102,7 +106,15 @@ anyHex = read . pure <$> anyOf "0123456789"
      <|> 13 <$ anyOf "dD"
      <|> 14 <$ anyOf "eE"
      <|> 15 <$ anyOf "fF"
-  
+
+{-
+TODO group on equal or less indentation, e.g.
+a
+  b c
+  d e
+    f
+= a (b c) (d e f)
+-}
 ws :: ZParser String
 ws = str "\n" <|> str "\t" <|> str " "
 
@@ -113,11 +125,6 @@ eof = Parser $ \i -> if null i then
                        Error (Pos 0 0, "There is still input left: " ++ shorten i)
   where shorten s = take 16 s ++ if length s > 16 then "..." else ""  
 
--- TODO not efficient
-mkApChain :: (a -> a -> a) -> [a] -> a
-mkApChain _ []   = error "Empty expression"
-mkApChain _ [x]  = x
-mkApChain f xs = f (mkApChain f $ init xs) (last xs)
 
 parseError :: String -> Result (Pos, String) a
 parseError s = Error (Pos 0 0, s)
